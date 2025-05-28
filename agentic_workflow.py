@@ -1,7 +1,7 @@
 !pip install -q langsmith langchain openai --upgrade
 import os
 
-os.environ["langsmith_01"] = "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"
+os.environ["langsmith_01"] = "Your_API_KEY"
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_PROJECT"] = "LangGraph-Agentic-Workflow"
 from langchain_core.runnables import RunnableLambda
