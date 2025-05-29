@@ -1,109 +1,94 @@
 !pip install -q langgraph
-!pip install -q langsmith langchain openai --upgrade
-
+!pip install -q langsmith langchain langgraph transformers accelerate duckduckgo-search
 import os
-from typing import TypedDict, List, Dict, Any
-from langchain_core.runnables import RunnableLambda
-from langgraph.graph import END, StateGraph
 
-# Optional LangSmith integration
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_PROJECT"] = "LangGraph-Agentic-Workflow"
+os.environ["LANGCHAIN_PROJECT"] = "LangGraph-Agent-FreeModel"
+os.environ["LANGCHAIN_API_KEY"] = "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"  # 🔑 Replace with your LangSmith API key
+from langchain_core.runnables import RunnableLambda
+from transformers import pipeline
+import re
+from typing import TypedDict, List, Dict, Any
 
-# Define Graph State
-class GraphState(TypedDict):
-    query: str
-    subtasks: List[Dict[str, str]]
-    results: List[Dict[str, str]]
-    current_task: Dict[str, Any] | None
+# Free Hugging Face model
+generator = pipeline("text-generation", model="tiiuae/falcon-rw-1b", max_new_tokens=150)
 
-# Step 1: Plan Agent — splits user query into general subtasks
-def plan_agent(state: GraphState) -> GraphState:
-    query = state["query"]
-    # You can replace this with a real LLM plan generation
-    subtasks = [
-        {"task": f"Understand and analyze: {query}"},
-        {"task": f"Break down requirements of: {query}"},
-        {"task": f"Suggest implementation plan for: {query}"}
-    ]
+# Plan Agent
+def plan_agent(state):
+    user_query = state["query"]
+    prompt = f"""You are a planner agent. Break down the user query into clear subtasks.
+
+User Query: "{user_query}"
+
+Subtasks:
+1."""
+    generated = generator(prompt, do_sample=True, truncation=True)[0]["generated_text"]
+    subtasks = re.findall(r"\d+\.\s+(.*)", generated)
     return {
-        "query": query,
-        "subtasks": subtasks,
-        "results": [],
-        "current_task": None
+        "query": user_query,
+        "subtasks": [{"task": t.strip()} for t in subtasks],
+        "results": []
     }
 
-plan_node = RunnableLambda(plan_agent)
-
-# Step 2: Tool Agent — simulates or solves each subtask
-def tool_agent(state: GraphState) -> GraphState:
+# Tool Agent (Search or simulate result)
+from duckduckgo_search import DDGS
+def tool_agent(state):
+    results = state["results"]
     subtasks = state["subtasks"]
-    results = state.get("results", [])
 
     if len(results) < len(subtasks):
         task = subtasks[len(results)]["task"]
-        result = f"Simulated result for: {task}"
+
+        if "search" in task.lower() or "what is" in task.lower():
+            with DDGS() as ddgs:
+                result = next(ddgs.text(task), {}).get("body", "No result found.")
+        else:
+            result = f"Simulated result for: {task}"
+
         results.append({"task": task, "result": result})
 
     return {
         "query": state["query"],
         "subtasks": subtasks,
-        "results": results,
-        "current_task": state.get("current_task")
+        "results": results
     }
+from langgraph.graph import StateGraph, END
 
+class GraphState(TypedDict):
+    query: str
+    subtasks: List[Dict[str, str]]
+    results: List[Dict[str, str]]
+
+plan_node = RunnableLambda(plan_agent)
 tool_node = RunnableLambda(tool_agent)
 
-# Optional: Reflection node (currently stubbed)
-def reflect(input: dict) -> dict:
-    return {"feedback": "Looks good", "new_task": {"task": "Verify correctness"}}
-
-reflect_node = RunnableLambda(reflect)
-
-# Optional: Refine plan with new task
-def refine_plan(input: dict) -> dict:
-    subtasks = input["subtasks"]
-    if input.get("new_task"):
-        subtasks.append(input["new_task"])
-    return {"subtasks": subtasks}
-
-refine_node = RunnableLambda(refine_plan)
-
-# Conditional logic
-def should_continue(state: GraphState) -> str:
-    return "tool" if len(state["results"]) < len(state["subtasks"]) else END
-
-# Build LangGraph
 builder = StateGraph(GraphState)
+builder.add_node("PlanAgent", plan_node)
+builder.add_node("ToolAgent", tool_node)
 
-builder.add_node("plan", plan_node)
-builder.add_node("tool", tool_node)
+builder.set_entry_point("PlanAgent")
+builder.add_edge("PlanAgent", "ToolAgent")
+builder.add_conditional_edges(
+    "ToolAgent",
+    lambda state: END if len(state["results"]) == len(state["subtasks"]) else "ToolAgent"
+)
 
-builder.set_entry_point("plan")
-builder.add_edge("plan", "tool")
-builder.add_conditional_edges("tool", should_continue)
-
-builder.set_finish_point("tool")
-
+builder.set_finish_point("ToolAgent")
 graph = builder.compile()
-
-# 🔹 Prompt user for input
-user_query = input("📝 Enter your query: ")
+user_input = input("🔹 Enter your query: ")
 
 initial_state = {
-    "query": user_query,
+    "query": user_input,
     "subtasks": [],
-    "results": [],
-    "current_task": None
+    "results": []
 }
 
 output = graph.invoke(initial_state)
 
-# ✅ Final Output Display
 print("\n📌 Subtasks:")
 for task in output["subtasks"]:
-    print(f"- {task['task']}")
+    print(f"🔹 {task['task']}")
 
-print("\n✅ Final Results by Subtask:")
+print("\n✅ Results:")
 for r in output["results"]:
     print(f"🔹 {r['task']} → {r['result']}")
