@@ -4,7 +4,7 @@ import os
 
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_PROJECT"] = "LangGraph-Agent-FreeModel"
-os.environ["LANGCHAIN_API_KEY"] = "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"  # 🔑 Replace with your LangSmith API key
+os.environ["LANGCHAIN_API_KEY"] = "# 🔑 Replace with your LangSmith API key"  
 from langchain_core.runnables import RunnableLambda
 from transformers import pipeline
 import re
